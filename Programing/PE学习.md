@@ -24,7 +24,7 @@
      typedef struct _IMAGE_DOS_HEADER {
          WORD e_magic;   // Magic number，2个字节
                      ... ...               
-         LONG e_lfanew;  // File address of new exe header，4个字节，这其实就是3c位置
+         LONG e_lfanew;  // File address of new exe header，4个字节，指向了pe开头，这其实就是3c位置
      }             
      // 此结构体是给16位程序使用，只有上面2个字段有用
      实验，用ultraEidt打开一个exe文件，删掉中间内容，看看程序能否正常运行。 
@@ -49,10 +49,14 @@
           DWORD TimeDateStamp;          // 时间戳，编译器填写，与文件属性里面（创建时间、修改时间）无关
           DWORD PointerToSymbolTable;   // 调试相关
           DWORD NumberOfSymbol;         // 调试相关 
-          WORD  sizeofoptionalheader;   // 可选pe头的大小，32位pe：0xE0 64位pe：0xF0
+          WORD  SizeOfOptionalHeader;   // 扩展pe头的大小，32位pe：0xE0 64位pe：0xF0
           WORD  Characteristics;        // 文件属性
       } IMAGE_FILE_HEADER, *PIMAGE_FILE_HEADER
       ```
+      重要属性：
+      * <font color=red>NumberOfSections 节数量</font>
+      * <font color=red>SizeOfOptionalHeader 扩展pe大小</font>
+      
        Characteristics 16位 每位的定义如下：
 
        | 数据位 | 常量符号 |为1时的含义|
@@ -113,56 +117,89 @@
       }
    
       ```     
-      * 扩展pe头中ImageBase这个字段很重要，表示pe文件在内存中展开的起始位置
-      3. pe文件的分节结构                     
-         实验：找到pe节表的位置。如果没有更改，扩展pe头的位置写的是e0，e0=224， e0的位置加224=1d08
-         节表是结构体数组，结构体定义如下：
-         ```c++
-         typedef struct _IMAGE_SECTION_HEADER {
-             BYTE Name[IMAGE_SIEOF_SHORT_NAME] // ASCII字符串，可自定义，只截取8个
-             union {                           // Misc双字，是该节在没有对齐前的真实尺寸，该值可以不准确
-               DWORD PhysicalAddress;
-               DWORD VirtualSize;
-             } Misc
-             DWORD VirtualAddress;             // 在内存中的偏移地址，加上ImageBase才是在内存中的真正地址
-             DWORD SizeOfRawData;              // 节在文件中对齐后的尺寸
-             DWORD PointerToRawData;           // 节区在文件中的偏移
-             ... ...
-             DWORD Characteristics;            // 节属性
-         } IMAGE_SECTION_HEADER *PIMAGE_SECTION_HEADER
+      重要属性：
+       * <font color=red>AddressOfEntryPoint 程序入口地址</font>
+       * <font color=red>ImageBase pe文件在内存中展开的起始位置</font>
+       * <font color=red>SectionAlignment 内存对齐</font>
+       * <font color=red>FileAglignment 文件对齐</font>
+      
+   3. pe文件的分节结构 
+      * 节的数量：标准pe头中NumberOfSections属性
+      实验：找到pe节表的位置。
+      扩展pe头是可以改的，要确认扩展pe头有没有被修改，可以查看标准pe头中的SizeOfOptionalHeader，
+      节表是结构体数组，结构体定义如下：
+      ```c++
+      typedef struct _IMAGE_SECTION_HEADER {
+          BYTE Name[IMAGE_SIEOF_SHORT_NAME] // 8个字节，ASCII字符串，可自定义，只截取8个
+          union {                           // Misc双字，是该节在没有对齐前的真实尺寸，该值可以不准确
+            DWORD PhysicalAddress;
+            DWORD VirtualSize;              // 在内存中实际大小
+          } Misc                            // 4个字节
+          DWORD VirtualAddress;             // 在内存中的偏移地址，加上ImageBase才是在内存中的真正地址， 内存中的地址
+          DWORD SizeOfRawData;              // 节在文件中对齐后的尺寸， 文件中的大小
+          DWORD PointerToRawData;           // 节区在文件中的偏移， 文件中的地址
+          DWORD PointerToRelocations;       // 调试相关
+          DWORD PointerToLinenumbers;
+          WORD NumberOfRelocations;
+          WORD NumberOfLinenumbers;
+          DWORD Characteristics;            // 节属性
+      } IMAGE_SECTION_HEADER *PIMAGE_SECTION_HEADER
       ```   
-  Characteristics 32位 每位的定义如下：
+    Characteristics 32位 每位的定义如下：
 
-  | 数据位 | 常量符号                                       | 为1时的含义                   |                                     
-  |--------------------------------------------|--------------------------|---|                                            
-  | 5   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
-  | 6   | IMAGE_SCN_CNT_INITIALIZED_DATA或00000040h   | 节中包含已初始化数据               | 
-  | 7   | IMAGE_SCN_CNT_UNINITIALIZED_DATA或00000080h | 节中包含未初始化数据               | 
-  | 8   | IMAGE_SCN_LNK_OTHER或00000100h              | 保留供未来使用                  | 
-  | 25   | IMAGE_SCN_MEM_DISCARDABLE或02000000h        | 节中的数据在进程开始以后将被丢弃，如.reloc | 
-  | 26   | IMAGE_SCN_MEM_NOT_CACHED或04000000h         | 节中的数据不会经过缓存              | 
-  | 27   | IMAGE_SCN_MEM_NOT_PAGED或08000000h          | 节中包含代码                   | 
-  | 28   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
-  | 29   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
-  | 30   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
-  | 31   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
-   实验：找一个程序的真实入口点。
-   * 先找到dos头 
-   * 找到pe头，找到pe标准头 
-   * 找到pe扩展头，找到AddressOfEntryPoint和ImageBase，两者相加得到真实程序入口点
-   * 使用od工具验证
+     | 数据位 | 常量符号                                       | 为1时的含义                   |                                     
+     |--------------------------------------------|--------------------------|---|                                            
+     | 5   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
+     | 6   | IMAGE_SCN_CNT_INITIALIZED_DATA或00000040h   | 节中包含已初始化数据               | 
+     | 7   | IMAGE_SCN_CNT_UNINITIALIZED_DATA或00000080h | 节中包含未初始化数据               | 
+     | 8   | IMAGE_SCN_LNK_OTHER或00000100h              | 保留供未来使用                  | 
+     | 25   | IMAGE_SCN_MEM_DISCARDABLE或02000000h        | 节中的数据在进程开始以后将被丢弃，如.reloc | 
+     | 26   | IMAGE_SCN_MEM_NOT_CACHED或04000000h         | 节中的数据不会经过缓存              | 
+     | 27   | IMAGE_SCN_MEM_NOT_PAGED或08000000h          | 节中包含代码                   | 
+     | 28   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
+     | 29   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
+     | 30   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
+     | 31   | IMAGE_SCN_CNT_CODE或00000020h               | 节中包含代码                   | 
+      实验：找一个程序的真实入口点。
+      * 先找到dos头 
+      * 找到pe头，找到pe标准头 
+      * 找到pe扩展头，找到AddressOfEntryPoint和ImageBase，两者相加得到真实程序入口点
+      * 使用od工具验证
  
-  4. RVA与FOA转换
-     * 全局变量，如果有初始值则存储在pe中，如果没有初始值只有当文件加载到内存中的时候才会分配空间。
-     * RVA: Relative Virtual Address 相对虚拟地址
-     * FOA: File Offset Address 文件偏移地址
-     * RVA与FOA转换：
-       1. 得到RVA的值：内存地址 - ImageBase
-       2. 判断RVA是否位于pe头中，如果是：foa == rva
-       3. 判断rva位于哪个节：
-          * Rva >= 节.VirtualAddress
-          * RVA <= 节.VirtualAddress + 当前节内存对齐后的大小
-          差值 = rva - 节.virtualAddress；
-       4. FOA = 节.PointerToRawData + 差值     
-     实现：修改一个程序的全局变量的值。
-       5. 
+4. RVA与FOA转换
+   * 全局变量，如果有初始值则存储在pe中，如果没有初始值只有当文件加载到内存中的时候才会分配空间。
+   * RVA: Relative Virtual Address 相对虚拟地址
+   * FOA: File Offset Address 文件偏移地址
+   * RVA与FOA转换：
+     1. 得到RVA的值：内存地址 - ImageBase
+     2. 判断RVA是否位于pe头中，如果是：foa == rva
+     3. 判断rva位于哪个节：
+        * Rva >= 节.VirtualAddress
+        * RVA <= 节.VirtualAddress + 当前节内存对齐后的大小
+        差值 = rva - 节.virtualAddress；
+     4. FOA = 节.PointerToRawData + 差值     
+   实验：
+     * 修改一个可执行程序的全局变量的值。
+       1. 使用vc++6.0写一个带有全局变量的程序，编译可执行程序。
+       2. 使用ultraEdit修改可执行程序中全部变量的值。
+     * 将对话框注入到可执行程序中。
+       1. 构造要注入的代码
+          1. 使用vc++6.0写一个对话框程序 
+          ```c++
+          MessageBox(0, 0, 0, 0);
+          ```
+          2. 打断点，f5进入debug，alt+8显示反汇编窗口，alt+6显示内存地址。可以查看到程序硬编码。
+          
+          6A(PUSH) 00 6A 00 6A 00 6A 00(4个参数 0) E8(CALL) 跳转地址 E9(JMP) 跳转地址
+       
+          <font color=red>跳转地址 = 要跳转的地址-e8指令当前地址（ImageBase + e8地址）-5</font>
+          
+        2. 在pe空白区构造一段代码
+           1. pe头和段之间有大量空白区域
+           2. 找到messagebox函数的地址，使用od，按顶部e按钮，找到user32.dll双击，ctrl+n进入函数列表，在这里可以找到MessageBoxA函数，这里可以看到地址
+           3. 找到AddressOfEntryPoint和ImageBase
+        3. 修改入口地址为新增代码
+           1. 修改AddressOfEntryPoint地址为我们的代码地址
+        4. 新增代码执行后，跳回入口地址
+           1. E9即为跳转
+     
