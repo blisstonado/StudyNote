@@ -113,7 +113,7 @@
            DWORD SizeOfHeapCommit;     // 初始化时实际提交大小
            DWORD LoaderFlags;          // 调试相关
            DWORD NumberOfRvaAndSizes;  // 目录项目数
-           IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
+           IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES]; // 16 * 8 = 128
       }
    
       ```     
@@ -194,12 +194,111 @@
        
           <font color=red>跳转地址 = 要跳转的地址-e8指令当前地址（ImageBase + e8地址）-5</font>
           
-        2. 在pe空白区构造一段代码
-           1. pe头和段之间有大量空白区域
-           2. 找到messagebox函数的地址，使用od，按顶部e按钮，找到user32.dll双击，ctrl+n进入函数列表，在这里可以找到MessageBoxA函数，这里可以看到地址
-           3. 找到AddressOfEntryPoint和ImageBase
-        3. 修改入口地址为新增代码
-           1. 修改AddressOfEntryPoint地址为我们的代码地址
-        4. 新增代码执行后，跳回入口地址
-           1. E9即为跳转
-     
+       2. 在pe空白区构造一段代码
+          1. pe头和段之间有大量空白区域
+          2. 找到messagebox函数的地址，使用od，按顶部e按钮，找到user32.dll双击，ctrl+n进入函数列表，在这里可以找到MessageBoxA函数，这里可以看到地址
+          3. 找到AddressOfEntryPoint和ImageBase
+       3. 修改入口地址为新增代码
+         1. 修改AddressOfEntryPoint地址为我们的代码地址
+       4. 新增代码执行后，跳回入口地址
+         1. E9即为跳转
+5. 扩大节     
+   1. 分配一块新的空间，大小为s
+   2. 将最后一个节的SizeOfRawData和VirtualSize改成N，这两个值看谁大选谁
+   
+      N = (SizeOfRawData（文件大小）或者VirtualSize（内存大小）内存对齐后的值) + s
+   3. 修改SizeOfImage（内存中）大小，扩展pe头中数56个字节，第57个字节， 
+   SizeOfImage = SizeOfImage + 内存中扩大的值
+   4. 注意此节有没有可执行的属性，如果没有则要修改节表结构的Characteristics字段，加上可执行属性
+   
+   实验：在最后一个节增加500字节
+   1. 用ue打开程序，查看最后一个节的解表
+   2. 500字节，转换为10进制 = 1280
+   3. 右键-》16进制插入/删除，插入1280
+   4. 修改SizeOfRawData和VirtualSize的值，并计算出差值。
+   5. 修改SizeOfImage，SizeOfImage += 差值
+   6. 看程序是否能正常打开。
+   
+6. 新增节
+   1. 判断是否有足够的空间，可以添加一个节表
+   2. 在解表中新增一个成员
+   3. 修改pe头中节的数量
+   4. 修改sizeOfImage的大小
+   5. 再原有数据的最后，新增一个节的数据（内存对齐的整数倍）
+   6. 修正新增节表的属性
+7. 合并节
+8. 导出表
+   扩展pe头里的最后一个成员有16个结构体
+   ```c++
+   struct _IMAGE_DATA_DIRECTORY {
+      0X00 DWORD VirtualAddress; // 地址， 这个值是rav，需要转换成foa
+      0x04 DWORD Size;           // 大小
+   }
+   ```
+   1. 导出表结构体
+   ```c++
+   typedef struct _IMAGE_EXPORT_DIRECTORY {
+       DWORD Characteristics;        // 未使用
+       DWORD TimeDateStamp;          // 时间戳
+       WORD MajorVersion;            // 未使用
+       WORD MinorVersion;            // 未使用
+       DWORD Name;                   // 指向该导出表文件名字字符串
+       DWORD Base;                   // 导出函数起始序号
+       DWORD NumberOfFunctions;      // 所有导出函数的个数
+       DWORD NumberOfName;           // 以函数名字导出的函数个数
+       DWORD AddressOfFunctions;     // 导出函数地址表rva
+       DWORD AddressOfNames;         // 导出函数名称表rva
+       DWORD AddressOfNameOrdinals;  // 导出函数序号表rva
+   }
+   ```
+   2. 
+9. 导入表 确定依赖模块
+   1. 导入表结构
+   ```c++
+   typedef struct _IMAGE_IMPORT_DESCRIPTOR {
+       union {
+          DWORD Characteristics;
+          DWORD OriginalFirstThunk;  // RVA指向IMAGE_THUNK_DATA结构数组
+       };
+       DWORD TimeDateStamp;          // 时间戳
+       DWORD ForwarderChain;
+       DWORD Name;                   // RVA指向dll名字，该名字以20个0结尾
+       DWORD FirstThunk;             // RVA指向IMAGE_THUNK_DATA结构数组
+   }
+   
+   typedef struct _IMAGE_THUNK_DATA32 {
+     union {
+        PBYTE ForwarderString;
+        PDWORD Function;
+        DWORD Ordinal;                       // 序号
+        PIMAGE_IMPORT_BY_NAME AddressOfData; // 指向IMAGE_IMPORT_BY_NAME
+     }
+   }
+   
+   typedef struct _IMAGE_IMPORT_BY_NAME {
+     WORD Hint;     // 可能为空，编辑器决定如果不为空是函数在导出表中的索引
+     BYTE Name[1];  // 函数名称，以0结尾
+   } IMAGE_IMPORT_BY_NAME, *PIMAGE_IMPORT_BY_NAME;
+   ```
+10. 导入表 确定依赖函数
+11. 导入表 确定函数地址
+12. 重定位表
+    重定位表结构体
+    ```c++
+    typedef struct _IMAGE_BASE_RELOCATION {
+      DWORD VirtualAddress;
+      DWORD SizeOfBlock;
+    } IMAGE_BASE_RELOCATION;
+    ```
+13. shellcode
+    1. 什么是shellcode
+    不依赖环境，放到任何地方都可以运行的机器码
+    2. 编写规则
+       * 不能有全局变量
+       * 不能使用常量字符串
+       
+         要这样写： char szBuffer[] = {'H', 'e', 'l', 'l', 'o', 0};
+       * 不能使用系统调用
+       * 不能嵌套调用其他函数
+    3. 啊
+14. 是
