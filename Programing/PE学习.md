@@ -113,7 +113,7 @@
            DWORD SizeOfHeapCommit;     // 初始化时实际提交大小
            DWORD LoaderFlags;          // 调试相关
            DWORD NumberOfRvaAndSizes;  // 目录项目数
-           IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES]; // 16 * 8 = 128
+           IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES]; // 16 * 8 = 128 数据目录表，重要
       }
    
       ```     
@@ -166,7 +166,35 @@
       * 找到pe扩展头，找到AddressOfEntryPoint和ImageBase，两者相加得到真实程序入口点
       * 使用od工具验证
  
-4. RVA与FOA转换
+4. 数据目录表 Image_Data_Directory
+   1. 数据目录结构体
+   ```c++
+   typedef struct _IMAGE_DATA_DIRECTORY {
+        DWORD VirtualAddress; // 内存中的便宜 RVA内存便宜
+        DWORD Size;
+        // FOA  F0A+FileBuff=导出表的地址
+   } IMAGE_DATA_DIRECTORY, *PIMAGE_DATA_DIRECTORY;
+   ```
+   2. 导出表
+      1. 导出表结构体
+      ```c++
+      typedef struct _IMAGE_EXPORT_DIRECTORY {
+        DWORD Characteristics;      // 没用
+        DWORD TimeDateStamp;        // 时间戳
+        WORD MajorVersion;          
+        WORD MinorVersion;
+        DWORD Name;                 // 指向导出表文件名 rva-> foa+fileBuff = char *name
+        DWORD Base;                 // 导出函数起始序号
+        DWORD NumberOfFunctions;    // 导出函数个数， 最大的序号-最小的序号+1
+        DWORD NumberOfNames;        // 以名称导出函数个数
+        DWORD AddressOfFunctions;   // 导出函数地址表 rva->foa + fileBuff 
+        DWORD AddressOfNames;       // 导出函数名称表
+        DWORD AddressOfNameOrdinals;// 导出函数序号表
+      } IMAGE_EXPORT_DIRECTORY, *PIMAGE_EXPORT_DIRECTORY
+      ```
+      2. a 
+      
+5. RVA与FOA转换
    * 全局变量，如果有初始值则存储在pe中，如果没有初始值只有当文件加载到内存中的时候才会分配空间。
    * RVA: Relative Virtual Address 相对虚拟地址
    * FOA: File Offset Address 文件偏移地址
@@ -281,6 +309,18 @@
    } IMAGE_IMPORT_BY_NAME, *PIMAGE_IMPORT_BY_NAME;
    ```
 10. 导入表 确定依赖函数
+    1. 导入表解析知识点准备：
+       1. 调用dll文件函数原理
+          1. 程序在调用dll文件时，不会把dll文件函数直接编译到当前exe文件中，而是把dll文件对应的函数地址保存到了当前文件中。
+          2. 在文件中，对应的函数地址中存放的是函数的名称
+          3. 操作系统需要通过函数名称找到函数地址
+             1. HMODUEL = LoadLibraryA = ImafeBase
+             2. GetProcessAddr(hModuel, ravc)
+             3. 
+       2. 一个进程空间中的exe.dll文件`如何被加载进内存的
+       3. exe文件调用的动态链接库在内存中与硬盘中有什么不同
+    2. 
+11. 
 11. 导入表 确定函数地址
 12. 重定位表
     重定位表结构体
